@@ -1,0 +1,128 @@
+import { x402Client, x402HTTPClient } from '@x402/core/client';
+import type { Network } from '@x402/core/types';
+import { type ClientEvmSigner, ExactEvmScheme } from '@x402/evm';
+import { createSIWxClientHook, type SIWxSigner } from '@x402/extensions/sign-in-with-x';
+import { type ClientSvmSigner, ExactSvmScheme } from '@x402/svm';
+import { preAuthenticate } from './auth.js';
+import { createQuicknodeFetch } from './fetch.js';
+import { createGrpcTransport } from './grpc.js';
+import { SessionManager } from './session.js';
+import { createEvmSigners, createSvmSigners, detectNetworkType } from './signers.js';
+import type { GrpcTransportOptions, QuicknodeX402Client, QuicknodeX402Config } from './types.js';
+import { createWebSocket } from './websocket.js';
+
+/**
+ * Create a fully-configured Quicknode x402 client.
+ *
+ * Factory is async due to SVM signer creation (Ed25519 key derivation) and
+ * optional preAuth network call.
+ */
+export async function createQuicknodeX402Client(
+  config: QuicknodeX402Config,
+): Promise<QuicknodeX402Client> {
+  const networkType = detectNetworkType(config.network);
+  const network = config.network as Network;
+
+  // Validate config: ensure signer matches network type
+  if (networkType === 'evm') {
+    if (!config.evmPrivateKey && !config.evmSigner) {
+      throw new Error('eip155 network requires evmPrivateKey or evmSigner. Got neither.');
+    }
+    if (config.svmPrivateKey && !config.evmPrivateKey && !config.evmSigner) {
+      throw new Error(
+        'eip155 network requires an EVM signer, but only svmPrivateKey was provided.',
+      );
+    }
+  } else {
+    if (!config.svmPrivateKey && !config.svmSigner) {
+      throw new Error('solana network requires svmPrivateKey or svmSigner. Got neither.');
+    }
+    if (config.evmPrivateKey && !config.svmPrivateKey && !config.svmSigner) {
+      throw new Error(
+        'solana network requires an SVM signer, but only evmPrivateKey was provided.',
+      );
+    }
+  }
+
+  // Create signers
+  let paymentSigner: ClientEvmSigner | ClientSvmSigner;
+  let siwxSigner: SIWxSigner;
+
+  if (networkType === 'evm') {
+    if (config.evmPrivateKey) {
+      const derived = createEvmSigners(config.evmPrivateKey);
+      paymentSigner = config.evmSigner ?? derived.paymentSigner;
+      siwxSigner = config.siwxSigner ?? derived.siwxSigner;
+    } else {
+      paymentSigner = config.evmSigner!;
+      if (!config.siwxSigner) {
+        throw new Error(
+          'When providing evmSigner without evmPrivateKey, siwxSigner is also required.',
+        );
+      }
+      siwxSigner = config.siwxSigner;
+    }
+  } else {
+    if (config.svmPrivateKey) {
+      const derived = await createSvmSigners(config.svmPrivateKey);
+      paymentSigner = config.svmSigner ?? derived.paymentSigner;
+      siwxSigner = config.siwxSigner ?? derived.siwxSigner;
+    } else {
+      paymentSigner = config.svmSigner!;
+      if (!config.siwxSigner) {
+        throw new Error(
+          'When providing svmSigner without svmPrivateKey, siwxSigner is also required.',
+        );
+      }
+      siwxSigner = config.siwxSigner;
+    }
+  }
+
+  // Create x402Client and register payment scheme
+  // Cast is safe: networkType validation above guarantees the signer matches.
+  const client = new x402Client();
+  if (networkType === 'evm') {
+    client.register(network, new ExactEvmScheme(paymentSigner as ClientEvmSigner));
+  } else {
+    client.register(network, new ExactSvmScheme(paymentSigner as ClientSvmSigner));
+  }
+
+  // Create x402HTTPClient with SIWX hook
+  const httpClient = new x402HTTPClient(client).onPaymentRequired(createSIWxClientHook(siwxSigner));
+
+  // Create SessionManager and fetch wrapper
+  const session = new SessionManager();
+  const x402Fetch = createQuicknodeFetch({ httpClient, session });
+
+  // preAuth — authenticate via POST /auth before any paid requests
+  if (config.preAuth) {
+    const authResult = await preAuthenticate(
+      config.baseUrl,
+      config.network,
+      siwxSigner,
+      config.statement,
+    );
+    session.setToken(authResult.token, authResult.expiresAt);
+  }
+
+  return {
+    fetch: x402Fetch,
+    x402Client: client,
+    httpClient,
+    getToken: () => session.getToken(),
+    getAccountId: () => session.getAccountId(),
+    isTokenExpired: () => session.isExpired(),
+    authenticate: async () => {
+      const authResult = await preAuthenticate(
+        config.baseUrl,
+        config.network,
+        siwxSigner,
+        config.statement,
+      );
+      session.setToken(authResult.token, authResult.expiresAt);
+      return authResult;
+    },
+    createGrpcTransport: (options: GrpcTransportOptions) => createGrpcTransport(x402Fetch, options),
+    createWebSocket: (networkSlug: string) => createWebSocket(config.baseUrl, networkSlug, session),
+  };
+}
