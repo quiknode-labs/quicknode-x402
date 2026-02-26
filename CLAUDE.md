@@ -23,7 +23,7 @@ npm run typecheck   # tsc --noEmit
 
 - **Public repo, MIT license** — no staging URLs, no internal references
 - **Naming:** "Quicknode" (not "QuickNode")
-- **URLs:** Always `x402.quicknode.com` (never `x402.quiknode-cf.pro`)
+- **URLs:** Always `x402.quicknode.com`
 - Pin `@x402/evm` to `~2.2.0` (2.4.0 has breaking `toClientEvmSigner` change)
 
 ## Architecture

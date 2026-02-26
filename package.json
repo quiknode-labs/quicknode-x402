@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Quicknode x402 client — multi-chain payment, SIWX auth, session management",
   "license": "MIT",
+  "publishConfig": {
+    "access": "restricted"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/quiknode-labs/quicknode-x402.git"
