@@ -1,6 +1,6 @@
 {
   "name": "@quicknode/x402",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Quicknode x402 client — multi-chain payment, SIWX auth, session management",
   "license": "MIT",
   "publishConfig": {
