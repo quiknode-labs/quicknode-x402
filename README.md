@@ -1,6 +1,6 @@
 # @quicknode/x402
 
-Multi-chain payment client for Quicknode's x402 RPC proxy. Handles SIWX authentication, x402 USDC micropayments, JWT session management, and supports JSON-RPC, gRPC-Web, REST, and WebSocket protocols.
+Multi-chain payment client for Quicknode's x402 RPC proxy. Handles SIWX authentication, x402 stablecoin micropayments, JWT session management, and supports JSON-RPC, gRPC-Web, REST, and WebSocket protocols.
 
 ## Installation
 
@@ -58,7 +58,7 @@ const response = await client.fetch('https://x402.quicknode.com/solana-devnet', 
 ## Features
 
 - **SIWX Authentication** — Automatic Sign-In with X (EVM EIP-191 + Solana Ed25519) on 402 responses
-- **x402 v2 Payments** — Automatic USDC micropayments when credits are exhausted
+- **x402 v2 Payments** — Automatic stablecoin micropayments when credits are exhausted
 - **Session Management** — JWT caching, auto-extraction from settlement responses, expiry handling with 30s buffer
 - **Payment-in-flight Mutex** — Prevents concurrent double-payments when multiple requests hit 402 simultaneously
 - **gRPC-Web Transport** — Pre-configured Connect-RPC transport with x402 payment handling
@@ -187,11 +187,13 @@ const httpClient = new x402HTTPClient(client)
 | Polygon Amoy | `eip155:80002` | Testnet |
 | Polygon Mainnet | `eip155:137` | Mainnet |
 | Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Testnet |
+| XLayer Testnet | `eip155:1952` | Testnet |
+| XLayer Mainnet | `eip155:196` | Mainnet |
 | Solana Mainnet | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Mainnet |
 
 ### RPC Networks
 
-140+ blockchain networks supported. See the [x402 proxy documentation](https://x402.quicknode.com/.well-known/llms.txt) for the full list.
+140+ blockchain networks supported. See the [x402 proxy documentation](https://x402.quicknode.com/llms.txt) for the full list.
 
 ## Types
 
@@ -214,7 +216,7 @@ import type {
 ## Requirements
 
 - Node.js 18+
-- A wallet with USDC on a supported payment network
+- A wallet with USDC or USDG on a supported payment network
 
 ## License
 
