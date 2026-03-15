@@ -22,8 +22,9 @@ export async function createQuicknodeX402Client(
 ): Promise<QuicknodeX402Client> {
   const networkType = detectNetworkType(config.network);
   const network = config.network as Network;
+  const isPerRequest = config.paymentModel === 'pay-per-request';
 
-  // Validate config: ensure signer matches network type
+  // Validate config: ensure payment signer matches network type
   if (networkType === 'evm') {
     if (!config.evmPrivateKey && !config.evmSigner) {
       throw new Error('eip155 network requires evmPrivateKey or evmSigner. Got neither.');
@@ -44,9 +45,9 @@ export async function createQuicknodeX402Client(
     }
   }
 
-  // Create signers
+  // Create signers — siwxSigner is optional for pay-per-request
   let paymentSigner: ClientEvmSigner | ClientSvmSigner;
-  let siwxSigner: SIWxSigner;
+  let siwxSigner: SIWxSigner | undefined;
 
   if (networkType === 'evm') {
     if (config.evmPrivateKey) {
@@ -55,9 +56,9 @@ export async function createQuicknodeX402Client(
       siwxSigner = config.siwxSigner ?? derived.siwxSigner;
     } else {
       paymentSigner = config.evmSigner!;
-      if (!config.siwxSigner) {
+      if (!isPerRequest && !config.siwxSigner) {
         throw new Error(
-          'When providing evmSigner without evmPrivateKey, siwxSigner is also required.',
+          'When providing evmSigner without evmPrivateKey, siwxSigner is also required for credit-drawdown mode.',
         );
       }
       siwxSigner = config.siwxSigner;
@@ -69,9 +70,9 @@ export async function createQuicknodeX402Client(
       siwxSigner = config.siwxSigner ?? derived.siwxSigner;
     } else {
       paymentSigner = config.svmSigner!;
-      if (!config.siwxSigner) {
+      if (!isPerRequest && !config.siwxSigner) {
         throw new Error(
-          'When providing svmSigner without svmPrivateKey, siwxSigner is also required.',
+          'When providing svmSigner without svmPrivateKey, siwxSigner is also required for credit-drawdown mode.',
         );
       }
       siwxSigner = config.siwxSigner;
@@ -87,15 +88,47 @@ export async function createQuicknodeX402Client(
     client.register(network, new ExactSvmScheme(paymentSigner as ClientSvmSigner));
   }
 
-  // Create x402HTTPClient with SIWX hook
-  const httpClient = new x402HTTPClient(client).onPaymentRequired(createSIWxClientHook(siwxSigner));
+  // Register payment selection policy based on paymentModel
+  // BigInt-safe comparator (avoids Number() precision loss for large amounts)
+  const bigintAsc = (a: { amount: string }, b: { amount: string }) => {
+    const diff = BigInt(a.amount) - BigInt(b.amount);
+    return diff < 0n ? -1 : diff > 0n ? 1 : 0;
+  };
+
+  if (isPerRequest) {
+    // Select lowest-amount entry for our network (= per-request amount)
+    client.registerPolicy((_version, requirements) => {
+      const forNetwork = requirements.filter((r) => r.network === config.network);
+      if (forNetwork.length === 0) return requirements;
+      forNetwork.sort(bigintAsc);
+      return [forNetwork[0]];
+    });
+  } else {
+    // Select highest-amount entry for our network (= credit drawdown amount)
+    client.registerPolicy((_version, requirements) => {
+      const forNetwork = requirements.filter((r) => r.network === config.network);
+      if (forNetwork.length === 0) return requirements;
+      forNetwork.sort((a, b) => -bigintAsc(a, b));
+      return [forNetwork[0]];
+    });
+  }
+
+  // Create x402HTTPClient — SIWX hook only for credit drawdown
+  const httpClient = new x402HTTPClient(client);
+  if (!isPerRequest && siwxSigner) {
+    httpClient.onPaymentRequired(createSIWxClientHook(siwxSigner));
+  }
 
   // Create SessionManager and fetch wrapper
   const session = new SessionManager();
-  const x402Fetch = createQuicknodeFetch({ httpClient, session });
+  const x402Fetch = createQuicknodeFetch({
+    httpClient,
+    session,
+    paymentModel: config.paymentModel,
+  });
 
-  // preAuth — authenticate via POST /auth before any paid requests
-  if (config.preAuth) {
+  // preAuth — authenticate via POST /auth before any paid requests (credit drawdown only)
+  if (!isPerRequest && config.preAuth && siwxSigner) {
     const authResult = await preAuthenticate(
       config.baseUrl,
       config.network,
@@ -113,6 +146,14 @@ export async function createQuicknodeX402Client(
     getAccountId: () => session.getAccountId(),
     isTokenExpired: () => session.isExpired(),
     authenticate: async () => {
+      if (isPerRequest) {
+        throw new Error('authenticate() is not available in pay-per-request mode.');
+      }
+      if (!siwxSigner) {
+        throw new Error(
+          'authenticate() requires a SIWX signer. Provide evmPrivateKey or siwxSigner.',
+        );
+      }
       const authResult = await preAuthenticate(
         config.baseUrl,
         config.network,

@@ -25,6 +25,9 @@ export interface QuicknodeX402Config {
   siwxSigner?: SIWxSigner;
 
   // Options
+  /** Payment model: 'credit-drawdown' (default) uses SIWX auth + JWT session.
+   *  'pay-per-request' sends x402 payment on every request (no SIWX, no JWT). */
+  paymentModel?: 'credit-drawdown' | 'pay-per-request';
   /** If true, calls /auth with SIWX message during initialization to obtain JWT before first request. Default: false. */
   preAuth?: boolean;
   /** SIWX statement included in auth messages. Default: Quicknode ToS acceptance. */

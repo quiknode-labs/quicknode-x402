@@ -1,6 +1,6 @@
 # @quicknode/x402
 
-Multi-chain payment client for Quicknode's x402 RPC proxy. Handles SIWX authentication, x402 stablecoin micropayments, JWT session management, and supports JSON-RPC, gRPC-Web, REST, and WebSocket protocols.
+Multi-chain payment client for Quicknode's x402 RPC proxy. Supports two payment models: **per-request** ($0.001/request, no auth) and **credit drawdown** (SIWX auth + bulk credits). Handles SIWX authentication, x402 stablecoin micropayments, JWT session management, and supports JSON-RPC, gRPC-Web, REST, and WebSocket protocols.
 
 ## Installation
 
@@ -10,7 +10,30 @@ npm install @quicknode/x402
 
 ## Quick Start
 
-### EVM (Base Sepolia)
+### Per-Request (Simplest — No Auth)
+
+```typescript
+import { createQuicknodeX402Client } from '@quicknode/x402';
+
+const client = await createQuicknodeX402Client({
+  baseUrl: 'https://x402.quicknode.com',
+  network: 'eip155:84532', // Base Sepolia (payment network)
+  evmPrivateKey: '0xYOUR_PRIVATE_KEY',
+  paymentModel: 'pay-per-request',
+});
+
+// $0.001 per request — no auth, no credits, no session
+const response = await client.fetch('https://x402.quicknode.com/ethereum-mainnet', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+});
+
+const { result } = await response.json();
+console.log('Block:', BigInt(result));
+```
+
+### Credit Drawdown (High-Volume with Auth)
 
 ```typescript
 import { createQuicknodeX402Client } from '@quicknode/x402';
@@ -19,10 +42,10 @@ const client = await createQuicknodeX402Client({
   baseUrl: 'https://x402.quicknode.com',
   network: 'eip155:84532', // Base Sepolia
   evmPrivateKey: '0xYOUR_PRIVATE_KEY',
-  preAuth: true,
+  preAuth: true, // SIWX auth during init
 });
 
-// Make paid RPC calls — auth, payment, and session management handled automatically
+// Auth, payment, and session management handled automatically
 const response = await client.fetch('https://x402.quicknode.com/base-sepolia', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -57,12 +80,14 @@ const response = await client.fetch('https://x402.quicknode.com/solana-devnet', 
 
 ## Features
 
-- **SIWX Authentication** — Automatic Sign-In with X (EVM EIP-191 + Solana Ed25519) on 402 responses
+- **Two Payment Models** — Per-request ($0.001, no auth) or credit drawdown (SIWX auth + bulk credits)
+- **SIWX Authentication** — Automatic Sign-In with X (EVM EIP-191 + Solana Ed25519) on 402 responses (credit drawdown)
 - **x402 v2 Payments** — Automatic stablecoin micropayments when credits are exhausted
+- **No Billing for Errors** — Per-request only settles payment after a successful upstream response
 - **Session Management** — JWT caching, auto-extraction from settlement responses, expiry handling with 30s buffer
 - **Payment-in-flight Mutex** — Prevents concurrent double-payments when multiple requests hit 402 simultaneously
-- **gRPC-Web Transport** — Pre-configured Connect-RPC transport with x402 payment handling
-- **WebSocket** — Authenticated WebSocket connections with JWT query parameter
+- **gRPC-Web Transport** — Pre-configured Connect-RPC transport with x402 payment handling (credit drawdown only)
+- **WebSocket** — Authenticated WebSocket connections with JWT query parameter (credit drawdown only)
 - **Composable Extensions** — Standalone helpers for integrating with any x402 setup
 
 ## API
@@ -82,10 +107,11 @@ Async factory that creates a fully-configured client. Async due to SVM key deriv
 | `evmSigner` | `ClientEvmSigner` | | Custom EVM payment signer. Overrides `evmPrivateKey` for payments. |
 | `svmSigner` | `ClientSvmSigner` | | Custom SVM payment signer. Overrides `svmPrivateKey` for payments. |
 | `siwxSigner` | `SIWxSigner` | | Custom SIWX auth signer. Overrides the signer derived from private key. |
-| `preAuth` | `boolean` | | If true, authenticates via `POST /auth` during initialization. Default: `false`. |
+| `paymentModel` | `string` | | `'pay-per-request'` ($0.001/req, no auth) or `'credit-drawdown'` (SIWX auth, bulk credits). Default: `'credit-drawdown'`. |
+| `preAuth` | `boolean` | | If true, authenticates via `POST /auth` during initialization (credit drawdown only). Default: `false`. |
 | `statement` | `string` | | SIWX statement. Default: Quicknode ToS acceptance. |
 
-\* Provide either `evmPrivateKey` or `svmPrivateKey` matching the network type. Alternatively, provide signer overrides.
+\* Provide either `evmPrivateKey` or `svmPrivateKey` matching the network type. Alternatively, provide signer overrides. Per-request mode requires a payment signer but not a SIWX signer.
 
 ### Client Methods
 

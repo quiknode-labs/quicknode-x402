@@ -143,6 +143,111 @@ describe('createQuicknodeX402Client', () => {
     });
   });
 
+  describe('paymentModel: pay-per-request', () => {
+    it('skips preAuth even when preAuth=true', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+        paymentModel: 'pay-per-request',
+        preAuth: true,
+      });
+
+      // No /auth call should have been made
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(client.getToken()).toBeNull();
+    });
+
+    it('allows missing siwxSigner with evmSigner (no error)', async () => {
+      const mockEvmSigner = {
+        address: '0xabc' as `0x${string}`,
+        signTypedData: vi.fn(),
+      };
+
+      // In credit-drawdown, this would throw "siwxSigner is also required"
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmSigner: mockEvmSigner,
+        paymentModel: 'pay-per-request',
+      });
+
+      expect(client.fetch).toBeDefined();
+    });
+
+    it('still requires payment signer (evmPrivateKey or evmSigner)', async () => {
+      await expect(
+        createQuicknodeX402Client({
+          baseUrl: 'https://x402.quicknode.com',
+          network: 'eip155:84532',
+          paymentModel: 'pay-per-request',
+        }),
+      ).rejects.toThrow('evmPrivateKey or evmSigner');
+    });
+
+    it('authenticate() throws in pay-per-request mode', async () => {
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+        paymentModel: 'pay-per-request',
+      });
+
+      await expect(client.authenticate()).rejects.toThrow('not available in pay-per-request mode');
+    });
+
+    it('creates client with all expected methods', async () => {
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+        paymentModel: 'pay-per-request',
+      });
+
+      expect(client.fetch).toBeDefined();
+      expect(client.x402Client).toBeDefined();
+      expect(client.httpClient).toBeDefined();
+      expect(typeof client.getToken).toBe('function');
+      expect(typeof client.authenticate).toBe('function');
+    });
+  });
+
+  describe('paymentModel: credit-drawdown (default)', () => {
+    it('defaults to credit-drawdown when paymentModel not specified', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+      });
+
+      // Should have SIWX hook attached — verify by checking httpClient exists
+      expect(client.httpClient).toBeDefined();
+      expect(client.fetch).toBeDefined();
+    });
+
+    it('requires siwxSigner when using evmSigner without privateKey', async () => {
+      const mockEvmSigner = {
+        address: '0x1234' as `0x${string}`,
+        signTypedData: vi.fn(),
+      };
+
+      await expect(
+        createQuicknodeX402Client({
+          baseUrl: 'https://x402.quicknode.com',
+          network: 'eip155:84532',
+          evmSigner: mockEvmSigner,
+          paymentModel: 'credit-drawdown',
+        }),
+      ).rejects.toThrow('siwxSigner is also required');
+    });
+  });
+
   describe('signer override', () => {
     it('uses custom evmSigner and siwxSigner when provided', async () => {
       const mockEvmSigner = {
