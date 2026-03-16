@@ -58,8 +58,8 @@ export function createQuicknodeFetch(options: {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     // 1. Build request with Bearer JWT if available
     const headers = new Headers(init?.headers);
-    const token = session.getToken();
-    if (token && !session.isExpired()) {
+    const token = isPerRequest ? null : session.getToken();
+    if (!isPerRequest && token && !session.isExpired()) {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
@@ -68,9 +68,11 @@ export function createQuicknodeFetch(options: {
 
     // 2. Non-402 → extract session JWT if present, return
     if (response.status !== 402) {
-      const sessionData = extractSessionFromResponse(response, httpClient);
-      if (sessionData) {
-        session.setToken(sessionData.token, sessionData.expiresAt);
+      if (!isPerRequest) {
+        const sessionData = extractSessionFromResponse(response, httpClient);
+        if (sessionData) {
+          session.setToken(sessionData.token, sessionData.expiresAt);
+        }
       }
       return response;
     }
@@ -84,11 +86,13 @@ export function createQuicknodeFetch(options: {
         // First payment failed — fall through
       }
       // If the first payment succeeded, a JWT is now cached — retry with Bearer
-      const freshToken = session.getToken();
-      if (freshToken && !session.isExpired()) {
-        const retryHeaders = new Headers(init?.headers);
-        retryHeaders.set('Authorization', `Bearer ${freshToken}`);
-        return globalThis.fetch(new Request(input, { ...init, headers: retryHeaders }));
+      if (!isPerRequest) {
+        const freshToken = session.getToken();
+        if (freshToken && !session.isExpired()) {
+          const retryHeaders = new Headers(init?.headers);
+          retryHeaders.set('Authorization', `Bearer ${freshToken}`);
+          return globalThis.fetch(new Request(input, { ...init, headers: retryHeaders }));
+        }
       }
       // First payment failed or JWT expired — fall through to attempt our own payment.
     }
@@ -136,9 +140,11 @@ export function createQuicknodeFetch(options: {
       const retryResponse = await globalThis.fetch(retryRequest);
 
       // 9. Extract session JWT from settlement if present
-      const sessionData = extractSessionFromResponse(retryResponse, httpClient);
-      if (sessionData) {
-        session.setToken(sessionData.token, sessionData.expiresAt);
+      if (!isPerRequest) {
+        const sessionData = extractSessionFromResponse(retryResponse, httpClient);
+        if (sessionData) {
+          session.setToken(sessionData.token, sessionData.expiresAt);
+        }
       }
 
       resolvePayment();

@@ -334,6 +334,61 @@ describe('createQuicknodeFetch', () => {
       // No token set, so no Authorization header
       expect(capturedHeaders?.get('Authorization')).toBeNull();
     });
+
+    it('does not inject Bearer token even when session has a token', async () => {
+      session.setToken(
+        `h.${btoa(JSON.stringify({ sub: 'test' }))}.s`,
+        new Date(Date.now() + 3600_000).toISOString(),
+      );
+
+      let capturedHeaders: Headers | null = null;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (req: Request) => {
+        capturedHeaders = req.headers;
+        return new Response('ok', { status: 200 });
+      });
+
+      x402Fetch = createQuicknodeFetch({ httpClient, session, paymentModel: 'pay-per-request' });
+      await x402Fetch('https://example.com/api');
+
+      expect(capturedHeaders?.get('Authorization')).toBeNull();
+    });
+
+    it('does not cache session JWT from settlement response', async () => {
+      const paymentRequired = { accepts: [], extensions: {} };
+      const settleResponse = {
+        success: true,
+        extensions: {
+          'quicknode-session': {
+            info: { token: 'settlement-jwt', expiresAt: '2026-12-31' },
+          },
+        },
+      };
+
+      let callCount = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response('', {
+            status: 402,
+            headers: { 'PAYMENT-REQUIRED': 'pr' },
+          });
+        }
+        return new Response('ok', {
+          status: 200,
+          headers: { 'PAYMENT-RESPONSE': 'settle-data' },
+        });
+      });
+
+      httpClient.getPaymentRequiredResponse.mockReturnValue(paymentRequired);
+      httpClient.createPaymentPayload.mockResolvedValue({});
+      httpClient.encodePaymentSignatureHeader.mockReturnValue({});
+      httpClient.getPaymentSettleResponse.mockReturnValue(settleResponse);
+
+      x402Fetch = createQuicknodeFetch({ httpClient, session, paymentModel: 'pay-per-request' });
+      await x402Fetch('https://example.com/api');
+
+      expect(session.getToken()).toBeNull();
+    });
   });
 
   describe('mutex failure path', () => {
