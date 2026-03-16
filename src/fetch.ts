@@ -56,28 +56,33 @@ export function createQuicknodeFetch(options: {
   let paymentInFlight: Promise<void> | null = null;
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    // 1. Build request with Bearer JWT if available
+    // 1. Build request with Bearer JWT if available (skip for per-request — no session reuse)
     const headers = new Headers(init?.headers);
-    const token = session.getToken();
-    if (token && !session.isExpired()) {
-      headers.set('Authorization', `Bearer ${token}`);
+    if (!isPerRequest) {
+      const token = session.getToken();
+      if (token && !session.isExpired()) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
     }
 
     const request = new Request(input, { ...init, headers });
     const response = await globalThis.fetch(request);
 
-    // 2. Non-402 → extract session JWT if present, return
+    // 2. Non-402 → extract session JWT if present, return (skip for per-request)
     if (response.status !== 402) {
-      const sessionData = extractSessionFromResponse(response, httpClient);
-      if (sessionData) {
-        session.setToken(sessionData.token, sessionData.expiresAt);
+      if (!isPerRequest) {
+        const sessionData = extractSessionFromResponse(response, httpClient);
+        if (sessionData) {
+          session.setToken(sessionData.token, sessionData.expiresAt);
+        }
       }
       return response;
     }
 
     // 3. Concurrent payment guard: if another request is already paying, wait for it.
     //    On success → retry with newly-cached JWT. On failure → fall through to own payment.
-    if (paymentInFlight) {
+    //    Skipped for per-request — each request pays independently.
+    if (!isPerRequest && paymentInFlight) {
       try {
         await paymentInFlight;
       } catch {
@@ -135,10 +140,12 @@ export function createQuicknodeFetch(options: {
       // 8. Retry with merged headers
       const retryResponse = await globalThis.fetch(retryRequest);
 
-      // 9. Extract session JWT from settlement if present
-      const sessionData = extractSessionFromResponse(retryResponse, httpClient);
-      if (sessionData) {
-        session.setToken(sessionData.token, sessionData.expiresAt);
+      // 9. Extract session JWT from settlement if present (skip for per-request)
+      if (!isPerRequest) {
+        const sessionData = extractSessionFromResponse(retryResponse, httpClient);
+        if (sessionData) {
+          session.setToken(sessionData.token, sessionData.expiresAt);
+        }
       }
 
       resolvePayment();
