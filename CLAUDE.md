@@ -1,6 +1,6 @@
 # @quicknode/x402
 
-Public npm package providing a multi-chain payment client for Quicknode's x402 RPC proxy.
+Public npm package providing a multi-chain payment client for Quicknode's x402 RPC proxy. Supports two payment models: `pay-per-request` ($0.001/request, no auth, no SIWX) and `credit-drawdown` (SIWX auth + bulk credits, default).
 
 ## Build & Test
 
@@ -31,7 +31,7 @@ npm run typecheck   # tsc --noEmit
 - `src/client.ts` — Main factory: validates config, creates signers, wires x402 pipeline
 - `src/auth.ts` — SIWX message construction and `/auth` POST
 - `src/session.ts` — JWT extraction from headers, expiry management
-- `src/fetch.ts` — Wraps fetch with Bearer auth, SIWX hook, session extraction, payment mutex
+- `src/fetch.ts` — Wraps fetch with Bearer auth, SIWX hook, session extraction, payment mutex. Per-request mode skips SIWX hooks via `skipHooks`.
 - `src/signers.ts` — EVM (viem) and SVM (@solana/signers) signer creation
 - `src/grpc.ts` — gRPC-Web transport via @connectrpc/connect-web
 - `src/websocket.ts` — Authenticated WebSocket with JWT query param

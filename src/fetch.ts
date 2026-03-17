@@ -17,9 +17,10 @@ import { extractSessionFromResponse, type SessionManager } from './session.js';
 async function resolvePaymentWithHooks(
   httpClient: x402HTTPClient,
   paymentRequired: PaymentRequired,
+  skipHooks = false,
 ): Promise<Record<string, string>> {
-  // Run onPaymentRequired hooks (SIWX) → supplemental headers
-  const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired);
+  // Run onPaymentRequired hooks (SIWX) → supplemental headers (skipped for per-request)
+  const hookHeaders = skipHooks ? {} : await httpClient.handlePaymentRequired(paymentRequired);
   // Create x402 payment payload
   const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
   // Encode payment into HTTP headers
@@ -44,8 +45,10 @@ async function resolvePaymentWithHooks(
 export function createQuicknodeFetch(options: {
   httpClient: x402HTTPClient;
   session: SessionManager;
+  paymentModel?: 'credit-drawdown' | 'pay-per-request';
 }): typeof globalThis.fetch {
-  const { httpClient, session } = options;
+  const { httpClient, session, paymentModel } = options;
+  const isPerRequest = paymentModel === 'pay-per-request';
 
   // Payment-in-flight mutex: prevents concurrent double-payments.
   // When one request triggers a 402 payment, concurrent 402s wait for it
@@ -53,28 +56,33 @@ export function createQuicknodeFetch(options: {
   let paymentInFlight: Promise<void> | null = null;
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    // 1. Build request with Bearer JWT if available
+    // 1. Build request with Bearer JWT if available (skip for per-request — no session reuse)
     const headers = new Headers(init?.headers);
-    const token = session.getToken();
-    if (token && !session.isExpired()) {
-      headers.set('Authorization', `Bearer ${token}`);
+    if (!isPerRequest) {
+      const token = session.getToken();
+      if (token && !session.isExpired()) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
     }
 
     const request = new Request(input, { ...init, headers });
     const response = await globalThis.fetch(request);
 
-    // 2. Non-402 → extract session JWT if present, return
+    // 2. Non-402 → extract session JWT if present, return (skip for per-request)
     if (response.status !== 402) {
-      const sessionData = extractSessionFromResponse(response, httpClient);
-      if (sessionData) {
-        session.setToken(sessionData.token, sessionData.expiresAt);
+      if (!isPerRequest) {
+        const sessionData = extractSessionFromResponse(response, httpClient);
+        if (sessionData) {
+          session.setToken(sessionData.token, sessionData.expiresAt);
+        }
       }
       return response;
     }
 
     // 3. Concurrent payment guard: if another request is already paying, wait for it.
     //    On success → retry with newly-cached JWT. On failure → fall through to own payment.
-    if (paymentInFlight) {
+    //    Skipped for per-request — each request pays independently.
+    if (!isPerRequest && paymentInFlight) {
       try {
         await paymentInFlight;
       } catch {
@@ -109,8 +117,13 @@ export function createQuicknodeFetch(options: {
         throw new Error(`Failed to parse payment requirements: ${error}`);
       }
 
-      // 6. Resolve payment with SIWX hooks (single point of adaptation)
-      const mergedHeaders = await resolvePaymentWithHooks(httpClient, paymentRequired);
+      // 6. Resolve payment with SIWX hooks (skipped for per-request — single point of adaptation)
+      // For per-request, each request pays independently — no JWT reuse optimization.
+      const mergedHeaders = await resolvePaymentWithHooks(
+        httpClient,
+        paymentRequired,
+        isPerRequest,
+      );
 
       // 7. Build retry request with merged headers (hook + payment)
       const retryHeaders = new Headers(request.headers);
@@ -127,10 +140,12 @@ export function createQuicknodeFetch(options: {
       // 8. Retry with merged headers
       const retryResponse = await globalThis.fetch(retryRequest);
 
-      // 9. Extract session JWT from settlement if present
-      const sessionData = extractSessionFromResponse(retryResponse, httpClient);
-      if (sessionData) {
-        session.setToken(sessionData.token, sessionData.expiresAt);
+      // 9. Extract session JWT from settlement if present (skip for per-request)
+      if (!isPerRequest) {
+        const sessionData = extractSessionFromResponse(retryResponse, httpClient);
+        if (sessionData) {
+          session.setToken(sessionData.token, sessionData.expiresAt);
+        }
       }
 
       resolvePayment();

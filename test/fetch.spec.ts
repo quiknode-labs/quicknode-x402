@@ -254,6 +254,88 @@ describe('createQuicknodeFetch', () => {
     });
   });
 
+  describe('paymentModel: pay-per-request', () => {
+    it('skips SIWX hook call on 402 response', async () => {
+      const paymentRequired = { accepts: [{ network: 'eip155:84532' }], extensions: {} };
+      const paymentPayload = { x402Version: 2, payload: 'test' };
+      const paymentHeaders = { 'PAYMENT-SIGNATURE': 'encoded-payment' };
+
+      let callCount = 0;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response('payment required', {
+            status: 402,
+            headers: { 'PAYMENT-REQUIRED': 'encoded-pr' },
+          });
+        }
+        return new Response('ok', { status: 200 });
+      });
+
+      httpClient.getPaymentRequiredResponse.mockReturnValue(paymentRequired);
+      // handlePaymentRequired should NOT be called for per-request
+      httpClient.handlePaymentRequired.mockResolvedValue({ 'sign-in-with-x': 'should-not-appear' });
+      httpClient.createPaymentPayload.mockResolvedValue(paymentPayload);
+      httpClient.encodePaymentSignatureHeader.mockReturnValue(paymentHeaders);
+
+      x402Fetch = createQuicknodeFetch({ httpClient, session, paymentModel: 'pay-per-request' });
+      const response = await x402Fetch('https://example.com/api');
+
+      expect(response.status).toBe(200);
+      // handlePaymentRequired should NOT have been called (hooks skipped)
+      expect(httpClient.handlePaymentRequired).not.toHaveBeenCalled();
+      // But createPaymentPayload should still be called
+      expect(httpClient.createPaymentPayload).toHaveBeenCalled();
+    });
+
+    it('retry request has PAYMENT-SIGNATURE but no SIWX headers', async () => {
+      const paymentRequired = { accepts: [{ network: 'eip155:84532' }], extensions: {} };
+      const paymentHeaders = { 'PAYMENT-SIGNATURE': 'encoded-payment' };
+
+      let callCount = 0;
+      let retryHeaders: Headers | null = null;
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (req: Request) => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response('', {
+            status: 402,
+            headers: { 'PAYMENT-REQUIRED': 'encoded-pr' },
+          });
+        }
+        retryHeaders = req.headers;
+        return new Response('ok', { status: 200 });
+      });
+
+      httpClient.getPaymentRequiredResponse.mockReturnValue(paymentRequired);
+      httpClient.handlePaymentRequired.mockResolvedValue({});
+      httpClient.createPaymentPayload.mockResolvedValue({});
+      httpClient.encodePaymentSignatureHeader.mockReturnValue(paymentHeaders);
+
+      x402Fetch = createQuicknodeFetch({ httpClient, session, paymentModel: 'pay-per-request' });
+      await x402Fetch('https://example.com/api');
+
+      // Should have PAYMENT-SIGNATURE
+      expect(retryHeaders?.get('PAYMENT-SIGNATURE')).toBe('encoded-payment');
+      // Should NOT have SIWX header
+      expect(retryHeaders?.get('sign-in-with-x')).toBeNull();
+    });
+
+    it('does not inject Bearer token (no session in per-request mode)', async () => {
+      let capturedHeaders: Headers | null = null;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (req: Request) => {
+        capturedHeaders = req.headers;
+        return new Response('ok', { status: 200 });
+      });
+
+      x402Fetch = createQuicknodeFetch({ httpClient, session, paymentModel: 'pay-per-request' });
+      await x402Fetch('https://example.com/api');
+
+      // No token set, so no Authorization header
+      expect(capturedHeaders?.get('Authorization')).toBeNull();
+    });
+  });
+
   describe('mutex failure path', () => {
     it('second request falls through to own payment when first fails', async () => {
       const paymentRequired = { accepts: [], extensions: {} };
