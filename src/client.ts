@@ -118,7 +118,10 @@ export async function createQuicknodeX402Client(
       const forNetwork = requirements.filter((r) => r.network === config.network);
       if (forNetwork.length === 0) return requirements;
       const batchEntries = forNetwork.filter((r) => isBatchPayment(r));
-      if (batchEntries.length === 0) return forNetwork; // fallback to any entry
+      if (batchEntries.length === 0) {
+        forNetwork.sort(bigintAsc);
+        return [forNetwork[0]];
+      }
       batchEntries.sort(bigintAsc);
       return [batchEntries[0]];
     });
