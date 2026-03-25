@@ -45,10 +45,10 @@ async function resolvePaymentWithHooks(
 export function createQuicknodeFetch(options: {
   httpClient: x402HTTPClient;
   session: SessionManager;
-  paymentModel?: 'credit-drawdown' | 'pay-per-request';
+  paymentModel?: 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
 }): typeof globalThis.fetch {
   const { httpClient, session, paymentModel } = options;
-  const isPerRequest = paymentModel === 'pay-per-request';
+  const isPerRequest = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
 
   // Payment-in-flight mutex: prevents concurrent double-payments.
   // When one request triggers a 402 payment, concurrent 402s wait for it
