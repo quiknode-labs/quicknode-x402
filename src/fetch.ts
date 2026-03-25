@@ -19,7 +19,7 @@ async function resolvePaymentWithHooks(
   paymentRequired: PaymentRequired,
   skipHooks = false,
 ): Promise<Record<string, string>> {
-  // Run onPaymentRequired hooks (SIWX) → supplemental headers (skipped for per-request)
+  // Run onPaymentRequired hooks (SIWX) → supplemental headers (skipped for sessionless modes)
   const hookHeaders = skipHooks ? {} : await httpClient.handlePaymentRequired(paymentRequired);
   // Create x402 payment payload
   const paymentPayload = await httpClient.createPaymentPayload(paymentRequired);
@@ -48,7 +48,7 @@ export function createQuicknodeFetch(options: {
   paymentModel?: 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
 }): typeof globalThis.fetch {
   const { httpClient, session, paymentModel } = options;
-  const isPerRequest = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
+  const isSessionless = paymentModel === 'pay-per-request' || paymentModel === 'nanopayment';
 
   // Payment-in-flight mutex: prevents concurrent double-payments.
   // When one request triggers a 402 payment, concurrent 402s wait for it
@@ -56,9 +56,9 @@ export function createQuicknodeFetch(options: {
   let paymentInFlight: Promise<void> | null = null;
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    // 1. Build request with Bearer JWT if available (skip for per-request — no session reuse)
+    // 1. Build request with Bearer JWT if available (skip for sessionless modes — no session reuse)
     const headers = new Headers(init?.headers);
-    if (!isPerRequest) {
+    if (!isSessionless) {
       const token = session.getToken();
       if (token && !session.isExpired()) {
         headers.set('Authorization', `Bearer ${token}`);
@@ -68,9 +68,9 @@ export function createQuicknodeFetch(options: {
     const request = new Request(input, { ...init, headers });
     const response = await globalThis.fetch(request);
 
-    // 2. Non-402 → extract session JWT if present, return (skip for per-request)
+    // 2. Non-402 → extract session JWT if present, return (skip for sessionless modes)
     if (response.status !== 402) {
-      if (!isPerRequest) {
+      if (!isSessionless) {
         const sessionData = extractSessionFromResponse(response, httpClient);
         if (sessionData) {
           session.setToken(sessionData.token, sessionData.expiresAt);
@@ -81,8 +81,8 @@ export function createQuicknodeFetch(options: {
 
     // 3. Concurrent payment guard: if another request is already paying, wait for it.
     //    On success → retry with newly-cached JWT. On failure → fall through to own payment.
-    //    Skipped for per-request — each request pays independently.
-    if (!isPerRequest && paymentInFlight) {
+    //    Skipped for sessionless modes — each request pays independently.
+    if (!isSessionless && paymentInFlight) {
       try {
         await paymentInFlight;
       } catch {
@@ -117,12 +117,12 @@ export function createQuicknodeFetch(options: {
         throw new Error(`Failed to parse payment requirements: ${error}`);
       }
 
-      // 6. Resolve payment with SIWX hooks (skipped for per-request — single point of adaptation)
-      // For per-request, each request pays independently — no JWT reuse optimization.
+      // 6. Resolve payment with SIWX hooks (skipped for sessionless modes — single point of adaptation)
+      // For sessionless modes, each request pays independently — no JWT reuse optimization.
       const mergedHeaders = await resolvePaymentWithHooks(
         httpClient,
         paymentRequired,
-        isPerRequest,
+        isSessionless,
       );
 
       // 7. Build retry request with merged headers (hook + payment)
@@ -140,8 +140,8 @@ export function createQuicknodeFetch(options: {
       // 8. Retry with merged headers
       const retryResponse = await globalThis.fetch(retryRequest);
 
-      // 9. Extract session JWT from settlement if present (skip for per-request)
-      if (!isPerRequest) {
+      // 9. Extract session JWT from settlement if present (skip for sessionless modes)
+      if (!isSessionless) {
         const sessionData = extractSessionFromResponse(retryResponse, httpClient);
         if (sessionData) {
           session.setToken(sessionData.token, sessionData.expiresAt);
