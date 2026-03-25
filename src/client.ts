@@ -80,7 +80,7 @@ export async function createQuicknodeX402Client(
       siwxSigner = config.siwxSigner ?? derived.siwxSigner;
     } else {
       paymentSigner = config.svmSigner!;
-      if (!isPerRequest && !config.siwxSigner) {
+      if (!isPerRequest && !isNanopayment && !config.siwxSigner) {
         throw new Error(
           'When providing svmSigner without svmPrivateKey, siwxSigner is also required for credit-drawdown mode.',
         );
