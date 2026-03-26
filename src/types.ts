@@ -26,8 +26,12 @@ export interface QuicknodeX402Config {
 
   // Options
   /** Payment model: 'credit-drawdown' (default) uses SIWX auth + JWT session.
-   *  'pay-per-request' sends x402 payment on every request (no SIWX, no JWT). */
-  paymentModel?: 'credit-drawdown' | 'pay-per-request';
+   *  'pay-per-request' sends x402 payment on every request (no SIWX, no JWT).
+   *  'nanopayment' uses Circle Gateway batch payments ($0.0001/request, EVM-only). */
+  paymentModel?: 'credit-drawdown' | 'pay-per-request' | 'nanopayment';
+  /** Circle Gateway chain name for nanopayment mode (e.g., 'arcTestnet', 'baseSepolia').
+   *  Maps to the `chain` parameter in GatewayClient. Only used when paymentModel is 'nanopayment'. */
+  gatewayChain?: import('@circle-fin/x402-batching/client').SupportedChainName;
   /** If true, calls /auth with SIWX message during initialization to obtain JWT before first request. Default: false. */
   preAuth?: boolean;
   /** SIWX statement included in auth messages. Default: Quicknode ToS acceptance. */
@@ -53,6 +57,8 @@ export interface QuicknodeX402Client {
   createGrpcTransport(options: GrpcTransportOptions): Transport;
   /** Create an authenticated WebSocket connection. */
   createWebSocket(network: string): WebSocket;
+  /** Circle Gateway client for nanopayment deposit/balance management. Only available when paymentModel is 'nanopayment'. */
+  gatewayClient?: import('@circle-fin/x402-batching/client').GatewayClient;
 }
 
 export interface AuthResult {

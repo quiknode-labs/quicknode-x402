@@ -248,6 +248,91 @@ describe('createQuicknodeX402Client', () => {
     });
   });
 
+  describe('paymentModel: nanopayment', () => {
+    it('creates client with nanopayment mode on EVM network', async () => {
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+        paymentModel: 'nanopayment',
+      });
+
+      expect(client.fetch).toBeDefined();
+      expect(client.x402Client).toBeDefined();
+      expect(client.gatewayClient).toBeDefined();
+    });
+
+    it('throws when nanopayment used with SVM network', async () => {
+      await expect(
+        createQuicknodeX402Client({
+          baseUrl: 'https://x402.quicknode.com',
+          network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+          svmPrivateKey:
+            '4wBqpZM9kzeSfSFMhyDY7B5bLhQXEwRaExYkzPTVfwjnMAQ8ktxqg4MXWRXE5dFT2wvYKnAJFqQLoYqbUEBNVAi',
+          paymentModel: 'nanopayment',
+        }),
+      ).rejects.toThrow('Nanopayment model is only supported on EVM networks');
+    });
+
+    it('allows missing siwxSigner with evmSigner (no error)', async () => {
+      const mockEvmSigner = {
+        address: '0xabc' as `0x${string}`,
+        signTypedData: vi.fn(),
+      };
+
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmSigner: mockEvmSigner,
+        paymentModel: 'nanopayment',
+      });
+
+      expect(client.fetch).toBeDefined();
+      // No gatewayClient when evmSigner used (requires privateKey for GatewayClient)
+      expect(client.gatewayClient).toBeUndefined();
+    });
+
+    it('skips preAuth even when preAuth=true', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('ok', { status: 200 }));
+
+      await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+        paymentModel: 'nanopayment',
+        preAuth: true,
+      });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('throws for unmapped network without explicit gatewayChain', async () => {
+      // eip155:1 has no CAIP2_TO_GATEWAY_CHAIN mapping
+      await expect(
+        createQuicknodeX402Client({
+          baseUrl: 'https://x402.quicknode.com',
+          network: 'eip155:1',
+          evmPrivateKey: testEvmKey,
+          paymentModel: 'nanopayment',
+        }),
+      ).rejects.toThrow('No Gateway chain mapping');
+    });
+
+    it('accepts explicit gatewayChain override', async () => {
+      const client = await createQuicknodeX402Client({
+        baseUrl: 'https://x402.quicknode.com',
+        network: 'eip155:84532',
+        evmPrivateKey: testEvmKey,
+        paymentModel: 'nanopayment',
+        gatewayChain: 'baseSepolia',
+      });
+
+      expect(client.gatewayClient).toBeDefined();
+    });
+  });
+
   describe('signer override', () => {
     it('uses custom evmSigner and siwxSigner when provided', async () => {
       const mockEvmSigner = {

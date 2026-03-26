@@ -3,7 +3,6 @@
 // Auth (for manual usage)
 export { preAuthenticate } from './auth.js';
 export { createQuicknodeX402Client } from './client.js';
-
 // Composable utilities (for standalone usage, following payment-identifier pattern)
 export {
   createSIWxClientHook, // re-exported from @x402/extensions
@@ -11,6 +10,19 @@ export {
   withBearerAuth,
   withSessionExtraction,
 } from './extensions.js';
+// Gateway (nanopayment deposit/balance helpers)
+export {
+  CAIP2_TO_GATEWAY_CHAIN,
+  GATEWAY_CHAIN_CONFIGS,
+  GATEWAY_DOMAINS,
+  type GatewayBalances,
+  type GatewayChainName,
+  GatewayClient,
+  type GatewayClientConfig,
+  type GatewayDepositResult,
+  isBatchPayment,
+  supportsBatching,
+} from './gateway.js';
 export type { SettlementWithExtensions } from './session.js';
 // Session manager (for advanced usage)
 export { extractSessionFromResponse, extractSessionFromSettle, SessionManager } from './session.js';

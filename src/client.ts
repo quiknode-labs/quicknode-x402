@@ -1,3 +1,6 @@
+import { isBatchPayment } from '@circle-fin/x402-batching';
+import type { GatewayClient } from '@circle-fin/x402-batching/client';
+import { registerBatchScheme } from '@circle-fin/x402-batching/client';
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import type { Network } from '@x402/core/types';
 import { type ClientEvmSigner, ExactEvmScheme } from '@x402/evm';
@@ -5,6 +8,7 @@ import { createSIWxClientHook, type SIWxSigner } from '@x402/extensions/sign-in-
 import { type ClientSvmSigner, ExactSvmScheme } from '@x402/svm';
 import { preAuthenticate } from './auth.js';
 import { createQuicknodeFetch } from './fetch.js';
+import { CAIP2_TO_GATEWAY_CHAIN } from './gateway.js';
 import { createGrpcTransport } from './grpc.js';
 import { SessionManager } from './session.js';
 import { createEvmSigners, createSvmSigners, detectNetworkType } from './signers.js';
@@ -23,6 +27,12 @@ export async function createQuicknodeX402Client(
   const networkType = detectNetworkType(config.network);
   const network = config.network as Network;
   const isPerRequest = config.paymentModel === 'pay-per-request';
+  const isNanopayment = config.paymentModel === 'nanopayment';
+
+  // Nanopayment is EVM-only
+  if (isNanopayment && networkType !== 'evm') {
+    throw new Error('Nanopayment model is only supported on EVM networks.');
+  }
 
   // Validate config: ensure payment signer matches network type
   if (networkType === 'evm') {
@@ -56,7 +66,7 @@ export async function createQuicknodeX402Client(
       siwxSigner = config.siwxSigner ?? derived.siwxSigner;
     } else {
       paymentSigner = config.evmSigner!;
-      if (!isPerRequest && !config.siwxSigner) {
+      if (!isPerRequest && !isNanopayment && !config.siwxSigner) {
         throw new Error(
           'When providing evmSigner without evmPrivateKey, siwxSigner is also required for credit-drawdown mode.',
         );
@@ -70,7 +80,7 @@ export async function createQuicknodeX402Client(
       siwxSigner = config.siwxSigner ?? derived.siwxSigner;
     } else {
       paymentSigner = config.svmSigner!;
-      if (!isPerRequest && !config.siwxSigner) {
+      if (!isPerRequest && !isNanopayment && !config.siwxSigner) {
         throw new Error(
           'When providing svmSigner without svmPrivateKey, siwxSigner is also required for credit-drawdown mode.',
         );
@@ -82,7 +92,14 @@ export async function createQuicknodeX402Client(
   // Create x402Client and register payment scheme
   // Cast is safe: networkType validation above guarantees the signer matches.
   const client = new x402Client();
-  if (networkType === 'evm') {
+  if (isNanopayment) {
+    // Register CompositeEvmScheme: dispatches to BatchEvmScheme for Gateway payments,
+    // falls back to ExactEvmScheme for standard exact payments.
+    registerBatchScheme(client, {
+      signer: paymentSigner as ClientEvmSigner,
+      fallbackScheme: new ExactEvmScheme(paymentSigner as ClientEvmSigner),
+    });
+  } else if (networkType === 'evm') {
     client.register(network, new ExactEvmScheme(paymentSigner as ClientEvmSigner));
   } else {
     client.register(network, new ExactSvmScheme(paymentSigner as ClientSvmSigner));
@@ -95,27 +112,44 @@ export async function createQuicknodeX402Client(
     return diff < 0n ? -1 : diff > 0n ? 1 : 0;
   };
 
-  if (isPerRequest) {
-    // Select lowest-amount entry for our network (= per-request amount)
+  if (isNanopayment) {
+    // Select batch (Gateway) entry for our network — lowest amount among batch entries
     client.registerPolicy((_version, requirements) => {
       const forNetwork = requirements.filter((r) => r.network === config.network);
       if (forNetwork.length === 0) return requirements;
-      forNetwork.sort(bigintAsc);
-      return [forNetwork[0]];
+      const batchEntries = forNetwork.filter((r) => isBatchPayment(r));
+      if (batchEntries.length === 0) {
+        forNetwork.sort(bigintAsc);
+        return [forNetwork[0]];
+      }
+      batchEntries.sort(bigintAsc);
+      return [batchEntries[0]];
+    });
+  } else if (isPerRequest) {
+    // Select lowest-amount non-batch entry for our network (= per-request amount)
+    client.registerPolicy((_version, requirements) => {
+      const forNetwork = requirements.filter((r) => r.network === config.network);
+      if (forNetwork.length === 0) return requirements;
+      const exactEntries = forNetwork.filter((r) => !isBatchPayment(r));
+      const candidates = exactEntries.length > 0 ? exactEntries : forNetwork;
+      candidates.sort(bigintAsc);
+      return [candidates[0]];
     });
   } else {
-    // Select highest-amount entry for our network (= credit drawdown amount)
+    // Select highest-amount non-batch entry for our network (= credit drawdown amount)
     client.registerPolicy((_version, requirements) => {
       const forNetwork = requirements.filter((r) => r.network === config.network);
       if (forNetwork.length === 0) return requirements;
-      forNetwork.sort((a, b) => -bigintAsc(a, b));
-      return [forNetwork[0]];
+      const exactEntries = forNetwork.filter((r) => !isBatchPayment(r));
+      const candidates = exactEntries.length > 0 ? exactEntries : forNetwork;
+      candidates.sort((a, b) => -bigintAsc(a, b));
+      return [candidates[0]];
     });
   }
 
   // Create x402HTTPClient — SIWX hook only for credit drawdown
   const httpClient = new x402HTTPClient(client);
-  if (!isPerRequest && siwxSigner) {
+  if (!isPerRequest && !isNanopayment && siwxSigner) {
     httpClient.onPaymentRequired(createSIWxClientHook(siwxSigner));
   }
 
@@ -127,8 +161,24 @@ export async function createQuicknodeX402Client(
     paymentModel: config.paymentModel,
   });
 
+  // Instantiate GatewayClient for nanopayment mode (if private key available)
+  let gatewayClient: GatewayClient | undefined;
+  if (isNanopayment && config.evmPrivateKey) {
+    const { GatewayClient: GC } = await import('@circle-fin/x402-batching/client');
+    const chainName = config.gatewayChain ?? CAIP2_TO_GATEWAY_CHAIN[config.network];
+    if (!chainName) {
+      throw new Error(
+        `No Gateway chain mapping for network '${config.network}'. Provide gatewayChain explicitly.`,
+      );
+    }
+    gatewayClient = new GC({
+      chain: chainName as import('@circle-fin/x402-batching/client').SupportedChainName,
+      privateKey: config.evmPrivateKey,
+    });
+  }
+
   // preAuth — authenticate via POST /auth before any paid requests (credit drawdown only)
-  if (!isPerRequest && config.preAuth && siwxSigner) {
+  if (!isPerRequest && !isNanopayment && config.preAuth && siwxSigner) {
     const authResult = await preAuthenticate(
       config.baseUrl,
       config.network,
@@ -146,8 +196,10 @@ export async function createQuicknodeX402Client(
     getAccountId: () => session.getAccountId(),
     isTokenExpired: () => session.isExpired(),
     authenticate: async () => {
-      if (isPerRequest) {
-        throw new Error('authenticate() is not available in pay-per-request mode.');
+      if (isPerRequest || isNanopayment) {
+        throw new Error(
+          `authenticate() is not available in ${isNanopayment ? 'nanopayment' : 'pay-per-request'} mode.`,
+        );
       }
       if (!siwxSigner) {
         throw new Error(
@@ -165,5 +217,6 @@ export async function createQuicknodeX402Client(
     },
     createGrpcTransport: (options: GrpcTransportOptions) => createGrpcTransport(x402Fetch, options),
     createWebSocket: (networkSlug: string) => createWebSocket(config.baseUrl, networkSlug, session),
+    gatewayClient,
   };
 }

@@ -1,6 +1,6 @@
 # @quicknode/x402
 
-Multi-chain payment client for Quicknode's x402 RPC proxy. Supports two payment models: **per-request** ($0.001/request, no auth) and **credit drawdown** (SIWX auth + bulk credits). Handles SIWX authentication, x402 stablecoin micropayments, JWT session management, and supports JSON-RPC, gRPC-Web, REST, and WebSocket protocols.
+Multi-chain payment client for Quicknode's x402 RPC proxy. Supports three payment models: **per-request** ($0.001/request, no auth), **credit drawdown** (SIWX auth + bulk credits), and **nanopayment** ($0.0001/request via Circle Gateway). Handles SIWX authentication, x402 stablecoin micropayments, JWT session management, and supports JSON-RPC, gRPC-Web, REST, and WebSocket protocols.
 
 ## Installation
 
@@ -31,6 +31,32 @@ const response = await client.fetch('https://x402.quicknode.com/ethereum-mainnet
 
 const { result } = await response.json();
 console.log('Block:', BigInt(result));
+```
+
+### Nanopayment (Sub-Cent via Circle Gateway)
+
+```typescript
+import { createQuicknodeX402Client } from '@quicknode/x402';
+
+const client = await createQuicknodeX402Client({
+  baseUrl: 'https://x402.quicknode.com',
+  network: 'eip155:84532', // Base Sepolia
+  evmPrivateKey: '0xYOUR_PRIVATE_KEY',
+  paymentModel: 'nanopayment',
+});
+
+// $0.0001 per request — no auth, payments batched via Circle Gateway
+const response = await client.fetch('https://x402.quicknode.com/base-sepolia', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+});
+
+// Check Gateway Wallet balance
+if (client.gatewayClient) {
+  const balances = await client.gatewayClient.getBalances();
+  console.log('Gateway available:', balances.gateway.formattedAvailable);
+}
 ```
 
 ### Credit Drawdown (High-Volume with Auth)
@@ -80,7 +106,7 @@ const response = await client.fetch('https://x402.quicknode.com/solana-devnet', 
 
 ## Features
 
-- **Two Payment Models** — Per-request ($0.001, no auth) or credit drawdown (SIWX auth + bulk credits)
+- **Three Payment Models** — Per-request ($0.001, no auth), credit drawdown (SIWX auth + bulk credits), or nanopayment ($0.0001 via Circle Gateway)
 - **SIWX Authentication** — Automatic Sign-In with X (EVM EIP-191 + Solana Ed25519) on 402 responses (credit drawdown)
 - **x402 v2 Payments** — Automatic stablecoin micropayments when credits are exhausted
 - **No Billing for Errors** — Per-request only settles payment after a successful upstream response
@@ -107,7 +133,8 @@ Async factory that creates a fully-configured client. Async due to SVM key deriv
 | `evmSigner` | `ClientEvmSigner` | | Custom EVM payment signer. Overrides `evmPrivateKey` for payments. |
 | `svmSigner` | `ClientSvmSigner` | | Custom SVM payment signer. Overrides `svmPrivateKey` for payments. |
 | `siwxSigner` | `SIWxSigner` | | Custom SIWX auth signer. Overrides the signer derived from private key. |
-| `paymentModel` | `string` | | `'pay-per-request'` ($0.001/req, no auth) or `'credit-drawdown'` (SIWX auth, bulk credits). Default: `'credit-drawdown'`. |
+| `paymentModel` | `string` | | `'pay-per-request'` ($0.001/req), `'credit-drawdown'` (SIWX auth, bulk credits), or `'nanopayment'` ($0.0001/req, Circle Gateway). Default: `'credit-drawdown'`. |
+| `gatewayChain` | `string` | | Circle Gateway chain name override (e.g., `'baseSepolia'`). Auto-detected from `network` for supported chains. Nanopayment mode only. |
 | `preAuth` | `boolean` | | If true, authenticates via `POST /auth` during initialization (credit drawdown only). Default: `false`. |
 | `statement` | `string` | | SIWX statement. Default: Quicknode ToS acceptance. |
 
@@ -126,6 +153,7 @@ Async factory that creates a fully-configured client. Async due to SVM key deriv
 | `createWebSocket(network)` | `WebSocket` | Authenticated WebSocket with JWT in query param |
 | `x402Client` | `x402Client` | Underlying x402 client (for advanced scheme registration) |
 | `httpClient` | `x402HTTPClient` | Underlying HTTP client (for advanced hook registration) |
+| `gatewayClient` | `GatewayClient \| undefined` | Circle Gateway client for deposit/balance management (nanopayment mode only) |
 
 ### gRPC-Web Transport
 
@@ -177,6 +205,11 @@ import {
   createEvmSigners,
   createSvmSigners,
   detectNetworkType,
+  // Gateway (nanopayment) helpers
+  GatewayClient,
+  CAIP2_TO_GATEWAY_CHAIN,
+  isBatchPayment,
+  supportsBatching,
 } from '@quicknode/x402';
 ```
 
@@ -215,6 +248,7 @@ const httpClient = new x402HTTPClient(client)
 | Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Testnet |
 | XLayer Testnet | `eip155:1952` | Testnet |
 | XLayer Mainnet | `eip155:196` | Mainnet |
+| Arc Testnet | `eip155:5042002` | Testnet |
 | Solana Mainnet | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Mainnet |
 
 ### RPC Networks
@@ -236,6 +270,10 @@ import type {
   SIWxSigner,
   EVMSigner,
   SolanaSigner,
+  GatewayChainName,
+  GatewayBalances,
+  GatewayClientConfig,
+  GatewayDepositResult,
 } from '@quicknode/x402';
 ```
 
