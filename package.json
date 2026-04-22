@@ -42,7 +42,7 @@
     "lint:fix": "biome check --write ."
   },
   "dependencies": {
-    "@circle-fin/x402-batching": "^2.0.4",
+    "@circle-fin/x402-batching": "^3.0.2",
     "@connectrpc/connect": "^2.0.0",
     "@connectrpc/connect-web": "^2.0.0",
     "@solana/codecs": "^2.1.0",

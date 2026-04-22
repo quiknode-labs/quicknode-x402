@@ -22,4 +22,6 @@ export const CAIP2_TO_GATEWAY_CHAIN: Record<string, string> = {
   'eip155:84532': 'baseSepolia',
   'eip155:80002': 'polygonAmoy',
   'eip155:5042002': 'arcTestnet',
+  'eip155:8453': 'base',
+  'eip155:137': 'polygon',
 };

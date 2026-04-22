@@ -21,6 +21,14 @@ describe('gateway module', () => {
     it('maps Arc Testnet', () => {
       expect(CAIP2_TO_GATEWAY_CHAIN['eip155:5042002']).toBe('arcTestnet');
     });
+
+    it('maps Base Mainnet', () => {
+      expect(CAIP2_TO_GATEWAY_CHAIN['eip155:8453']).toBe('base');
+    });
+
+    it('maps Polygon Mainnet', () => {
+      expect(CAIP2_TO_GATEWAY_CHAIN['eip155:137']).toBe('polygon');
+    });
   });
 
   describe('re-exports', () => {
