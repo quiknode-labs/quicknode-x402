@@ -76,6 +76,72 @@ export interface GrpcTransportOptions {
   interceptors?: Interceptor[];
 }
 
+export type X402DiscoverySource = 'well-known' | 'openapi';
+
+export interface X402DiscoveryOptions {
+  /** Custom fetch implementation for testing or non-standard runtimes. */
+  fetch?: typeof globalThis.fetch;
+}
+
+export interface X402PaymentAccept {
+  scheme?: string;
+  network?: string;
+  amount?: string;
+  asset?: string;
+  payTo?: string;
+  maxTimeoutSeconds?: number;
+  extra?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface X402DiscoveredResource {
+  /** Absolute URL of the paid resource. */
+  url: string;
+  /** Origin-relative path when available. */
+  path?: string;
+  method?: string;
+  title?: string;
+  summary?: string;
+  description?: string;
+  category?: string;
+  providerName?: string;
+  providerUrl?: string;
+  /** Human-readable price, if exposed by the discovery document. */
+  price?: string;
+  /** USD price string, if exposed by the discovery document. */
+  priceUsd?: string;
+  /** Payment requirements advertised by the discovery document, when available. */
+  accepts?: X402PaymentAccept[];
+  /** Additional machine-readable metadata from the discovery source. */
+  metadata?: Record<string, unknown>;
+  /** Input schema or parameter metadata. */
+  input?: unknown;
+  /** Output schema or example metadata. */
+  output?: unknown;
+}
+
+export interface X402DiscoveryResult {
+  origin: string;
+  source: X402DiscoverySource;
+  enabled?: boolean;
+  version?: number | string;
+  x402Version?: number;
+  facilitatorUrl?: string;
+  openapiUrl?: string;
+  wellKnownUrl?: string;
+  catalogUrl?: string;
+  payTo?: string;
+  accepts: X402PaymentAccept[];
+  resources: X402DiscoveredResource[];
+  info?: {
+    title?: string;
+    description?: string;
+    version?: string;
+    guidance?: string;
+  };
+  ownershipProofs?: string[];
+}
+
 // Re-export key types for consumer convenience
 export type { ClientEvmSigner } from '@x402/evm';
 export type { EVMSigner, SIWxSigner, SolanaSigner } from '@x402/extensions/sign-in-with-x';

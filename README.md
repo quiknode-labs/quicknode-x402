@@ -33,6 +33,32 @@ const { result } = await response.json();
 console.log('Block:', BigInt(result));
 ```
 
+### Discover a Paid Origin
+
+```typescript
+import { createQuicknodeX402Client, discoverX402Origin } from '@quicknode/x402';
+
+const discovery = await discoverX402Origin('https://x402.quicknode.com');
+const resource = discovery.resources.find((entry) => entry.method === 'POST');
+
+if (!resource) {
+  throw new Error('No paid resource found');
+}
+
+const client = await createQuicknodeX402Client({
+  baseUrl: 'https://x402.quicknode.com',
+  network: discovery.accepts[0]?.network ?? 'eip155:84532',
+  evmPrivateKey: '0xYOUR_PRIVATE_KEY',
+  paymentModel: 'pay-per-request',
+});
+
+const response = await client.fetch(resource.url, {
+  method: resource.method ?? 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+});
+```
+
 ### Nanopayment (Sub-Cent via Circle Gateway)
 
 ```typescript
@@ -107,6 +133,7 @@ const response = await client.fetch('https://x402.quicknode.com/solana-devnet', 
 ## Features
 
 - **Three Payment Models** — Per-request ($0.001, no auth), credit drawdown (SIWX auth + bulk credits), or nanopayment ($0.0001 via Circle Gateway)
+- **Origin Discovery** — Reads `.well-known/x402` or OpenAPI payment metadata to list paid resources before fetching
 - **SIWX Authentication** — Automatic Sign-In with X (EVM EIP-191 + Solana Ed25519) on 402 responses (credit drawdown)
 - **x402 v2 Payments** — Automatic stablecoin micropayments when credits are exhausted
 - **No Billing for Errors** — Per-request only settles payment after a successful upstream response
@@ -154,6 +181,14 @@ Async factory that creates a fully-configured client. Async due to SVM key deriv
 | `x402Client` | `x402Client` | Underlying x402 client (for advanced scheme registration) |
 | `httpClient` | `x402HTTPClient` | Underlying HTTP client (for advanced hook registration) |
 | `gatewayClient` | `GatewayClient \| undefined` | Circle Gateway client for deposit/balance management (nanopayment mode only) |
+
+### `discoverX402Origin(origin, options?): Promise<X402DiscoveryResult>`
+
+Reads an x402 seller origin and returns paid resource metadata. The helper tries
+`/.well-known/x402` first, then falls back to `/openapi.json` routes that expose
+`x-payment-info`, `x-agent-discovery`, or `402` response metadata. Discovery does
+not spend funds; pass a returned `resource.url` to `client.fetch()` to run the
+normal x402 payment flow.
 
 ### gRPC-Web Transport
 
@@ -210,6 +245,8 @@ import {
   CAIP2_TO_GATEWAY_CHAIN,
   isBatchPayment,
   supportsBatching,
+  // Origin discovery
+  discoverX402Origin,
 } from '@quicknode/x402';
 ```
 
@@ -274,6 +311,9 @@ import type {
   GatewayBalances,
   GatewayClientConfig,
   GatewayDepositResult,
+  X402DiscoveredResource,
+  X402DiscoveryResult,
+  X402PaymentAccept,
 } from '@quicknode/x402';
 ```
 

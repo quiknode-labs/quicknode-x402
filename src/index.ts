@@ -3,6 +3,8 @@
 // Auth (for manual usage)
 export { preAuthenticate } from './auth.js';
 export { createQuicknodeX402Client } from './client.js';
+// Discovery
+export { discoverX402Origin } from './discovery.js';
 // Composable utilities (for standalone usage, following payment-identifier pattern)
 export {
   createSIWxClientHook, // re-exported from @x402/extensions
@@ -40,4 +42,9 @@ export type {
   QuicknodeX402Config,
   SIWxSigner,
   SolanaSigner,
+  X402DiscoveredResource,
+  X402DiscoveryOptions,
+  X402DiscoveryResult,
+  X402DiscoverySource,
+  X402PaymentAccept,
 } from './types.js';
