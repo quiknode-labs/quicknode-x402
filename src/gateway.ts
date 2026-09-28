@@ -5,6 +5,8 @@
  * for buyer-side deposit/balance management.
  */
 
+import type { SupportedChainName } from '@circle-fin/x402-batching/client';
+
 // Re-export batch detection helpers from the root module
 export { isBatchPayment, supportsBatching } from '@circle-fin/x402-batching';
 export {
@@ -18,10 +20,11 @@ export {
 } from '@circle-fin/x402-batching/client';
 
 /** CAIP-2 network → Gateway chain name mapping for nanopayment-eligible chains. */
-export const CAIP2_TO_GATEWAY_CHAIN: Record<string, string> = {
+export const CAIP2_TO_GATEWAY_CHAIN: Record<string, SupportedChainName> = {
   'eip155:84532': 'baseSepolia',
   'eip155:80002': 'polygonAmoy',
   'eip155:5042002': 'arcTestnet',
   'eip155:8453': 'base',
   'eip155:137': 'polygon',
+  'eip155:5042': 'arc',
 };

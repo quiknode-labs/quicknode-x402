@@ -248,7 +248,8 @@ const httpClient = new x402HTTPClient(client)
 | Solana Devnet | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` | Testnet |
 | XLayer Testnet | `eip155:1952` | Testnet |
 | XLayer Mainnet | `eip155:196` | Mainnet |
-| Arc Testnet | `eip155:5042002` | Testnet |
+| Arc Testnet | `eip155:5042002` | Testnet (nanopayment only) |
+| Arc Mainnet | `eip155:5042` | Mainnet (nanopayment only) |
 | Solana Mainnet | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp` | Mainnet |
 
 ### RPC Networks
