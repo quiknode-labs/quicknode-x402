@@ -21,6 +21,25 @@ describe('gateway module', () => {
     it('maps Arc Testnet', () => {
       expect(CAIP2_TO_GATEWAY_CHAIN['eip155:5042002']).toBe('arcTestnet');
     });
+
+    it('maps Base Mainnet', () => {
+      expect(CAIP2_TO_GATEWAY_CHAIN['eip155:8453']).toBe('base');
+    });
+
+    it('maps Polygon Mainnet', () => {
+      expect(CAIP2_TO_GATEWAY_CHAIN['eip155:137']).toBe('polygon');
+    });
+
+    it('maps Arc Mainnet', () => {
+      expect(CAIP2_TO_GATEWAY_CHAIN['eip155:5042']).toBe('arc');
+    });
+
+    it('every mapped Gateway chain has the chain id of its CAIP-2 key', () => {
+      for (const [caip2, chainName] of Object.entries(CAIP2_TO_GATEWAY_CHAIN)) {
+        const chainId = Number(caip2.split(':')[1]);
+        expect(GATEWAY_CHAIN_CONFIGS[chainName].chain.id).toBe(chainId);
+      }
+    });
   });
 
   describe('re-exports', () => {
@@ -33,6 +52,7 @@ describe('gateway module', () => {
       expect(GATEWAY_DOMAINS.baseSepolia).toBe(6);
       expect(GATEWAY_DOMAINS.arcTestnet).toBe(26);
       expect(GATEWAY_DOMAINS.polygonAmoy).toBe(7);
+      expect(GATEWAY_DOMAINS.arc).toBe(26);
     });
 
     it('exports GATEWAY_CHAIN_CONFIGS with expected chains', () => {
