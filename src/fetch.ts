@@ -38,9 +38,9 @@ async function resolvePaymentWithHooks(
  * 3. x402 payment creation and header encoding
  * 4. Session JWT extraction from settlement responses
  *
- * NOTE: Requests with `ReadableStream` bodies are not retryable on 402 because the
- * stream is consumed by the first fetch. All our use cases (JSON-RPC, gRPC-Web) use
- * buffered bodies (string/ArrayBuffer).
+ * The effective Request is cloned before dispatch so payment and session retries
+ * preserve its body and fetch options. Request.clone() can buffer the unread
+ * branch, so avoid unbounded streaming bodies for paid requests.
  */
 export function createQuicknodeFetch(options: {
   httpClient: x402HTTPClient;
@@ -57,105 +57,107 @@ export function createQuicknodeFetch(options: {
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     // 1. Build request with Bearer JWT if available (skip for sessionless modes — no session reuse)
-    const headers = new Headers(init?.headers);
+    const request = new Request(input, init);
     if (!isSessionless) {
       const token = session.getToken();
       if (token && !session.isExpired()) {
-        headers.set('Authorization', `Bearer ${token}`);
+        request.headers.set('Authorization', `Bearer ${token}`);
       }
     }
 
-    const request = new Request(input, { ...init, headers });
-    const response = await globalThis.fetch(request);
-
-    // 2. Non-402 → extract session JWT if present, return (skip for sessionless modes)
-    if (response.status !== 402) {
-      if (!isSessionless) {
-        const sessionData = extractSessionFromResponse(response, httpClient);
-        if (sessionData) {
-          session.setToken(sessionData.token, sessionData.expiresAt);
-        }
-      }
-      return response;
-    }
-
-    // 3. Concurrent payment guard: if another request is already paying, wait for it.
-    //    On success → retry with newly-cached JWT. On failure → fall through to own payment.
-    //    Skipped for sessionless modes — each request pays independently.
-    if (!isSessionless && paymentInFlight) {
-      try {
-        await paymentInFlight;
-      } catch {
-        // First payment failed — fall through
-      }
-      // If the first payment succeeded, a JWT is now cached — retry with Bearer
-      const freshToken = session.getToken();
-      if (freshToken && !session.isExpired()) {
-        const retryHeaders = new Headers(init?.headers);
-        retryHeaders.set('Authorization', `Bearer ${freshToken}`);
-        return globalThis.fetch(new Request(input, { ...init, headers: retryHeaders }));
-      }
-      // First payment failed or JWT expired — fall through to attempt our own payment.
-    }
-
-    // 4. Set payment-in-flight mutex (released in finally block)
-    let resolvePayment!: () => void;
-    let rejectPayment!: (err: unknown) => void;
-    paymentInFlight = new Promise<void>((resolve, reject) => {
-      resolvePayment = resolve;
-      rejectPayment = reject;
-    });
-
+    const retryTemplate = request.clone();
     try {
-      // 5. Parse 402 response → PaymentRequired
-      let paymentRequired: PaymentRequired;
-      try {
-        paymentRequired = httpClient.getPaymentRequiredResponse((name) =>
-          response.headers.get(name),
-        );
-      } catch (error) {
-        throw new Error(`Failed to parse payment requirements: ${error}`);
-      }
+      const response = await globalThis.fetch(request);
 
-      // 6. Resolve payment with SIWX hooks (skipped for sessionless modes — single point of adaptation)
-      // For sessionless modes, each request pays independently — no JWT reuse optimization.
-      const mergedHeaders = await resolvePaymentWithHooks(
-        httpClient,
-        paymentRequired,
-        isSessionless,
-      );
-
-      // 7. Build retry request with merged headers (hook + payment)
-      const retryHeaders = new Headers(request.headers);
-      for (const [key, value] of Object.entries(mergedHeaders)) {
-        retryHeaders.set(key, value);
-      }
-      const retryRequest = new Request(request.url, {
-        method: request.method,
-        headers: retryHeaders,
-        body: init?.body, // Use original init body (Request body may be consumed)
-        redirect: request.redirect,
-      });
-
-      // 8. Retry with merged headers
-      const retryResponse = await globalThis.fetch(retryRequest);
-
-      // 9. Extract session JWT from settlement if present (skip for sessionless modes)
-      if (!isSessionless) {
-        const sessionData = extractSessionFromResponse(retryResponse, httpClient);
-        if (sessionData) {
-          session.setToken(sessionData.token, sessionData.expiresAt);
+      // 2. Non-402 → extract session JWT if present, return (skip for sessionless modes)
+      if (response.status !== 402) {
+        if (!isSessionless) {
+          const sessionData = extractSessionFromResponse(response, httpClient);
+          if (sessionData) {
+            session.setToken(sessionData.token, sessionData.expiresAt);
+          }
         }
+        return response;
       }
 
-      resolvePayment();
-      paymentInFlight = null;
-      return retryResponse;
-    } catch (err) {
-      // Payment failed — reject mutex so waiters attempt their own payment
-      rejectPayment(err);
-      paymentInFlight = null;
-      throw err;
+      // 3. Concurrent payment guard: if another request is already paying, wait for it.
+      //    On success → retry with newly-cached JWT. On failure → fall through to own payment.
+      //    Skipped for sessionless modes — each request pays independently.
+      if (!isSessionless && paymentInFlight) {
+        try {
+          await paymentInFlight;
+        } catch {
+          // First payment failed — fall through
+        }
+        // If the first payment succeeded, a JWT is now cached — retry with Bearer
+        const freshToken = session.getToken();
+        if (freshToken && !session.isExpired()) {
+          retryTemplate.headers.set('Authorization', `Bearer ${freshToken}`);
+          return globalThis.fetch(retryTemplate);
+        }
+        // First payment failed or JWT expired — fall through to attempt our own payment.
+      }
+
+      // 4. Set payment-in-flight mutex (released in finally block)
+      let resolvePayment!: () => void;
+      let rejectPayment!: (err: unknown) => void;
+      const currentPayment = new Promise<void>((resolve, reject) => {
+        resolvePayment = resolve;
+        rejectPayment = reject;
+      });
+      paymentInFlight = currentPayment;
+      // A caller without waiters still observes the error through its own fetch.
+      void currentPayment.catch(() => {});
+
+      try {
+        // 5. Parse 402 response → PaymentRequired
+        let paymentRequired: PaymentRequired;
+        try {
+          paymentRequired = httpClient.getPaymentRequiredResponse((name) =>
+            response.headers.get(name),
+          );
+        } catch (error) {
+          throw new Error(`Failed to parse payment requirements: ${error}`);
+        }
+
+        // 6. Resolve payment with SIWX hooks (skipped for sessionless modes — single point of adaptation)
+        // For sessionless modes, each request pays independently — no JWT reuse optimization.
+        const mergedHeaders = await resolvePaymentWithHooks(
+          httpClient,
+          paymentRequired,
+          isSessionless,
+        );
+
+        // 7. Build retry request with merged headers (hook + payment)
+        for (const [key, value] of Object.entries(mergedHeaders)) {
+          retryTemplate.headers.set(key, value);
+        }
+
+        // 8. Retry with merged headers
+        const retryResponse = await globalThis.fetch(retryTemplate);
+
+        // 9. Extract session JWT from settlement if present (skip for sessionless modes)
+        if (!isSessionless) {
+          const sessionData = extractSessionFromResponse(retryResponse, httpClient);
+          if (sessionData) {
+            session.setToken(sessionData.token, sessionData.expiresAt);
+          }
+        }
+
+        resolvePayment();
+        return retryResponse;
+      } catch (err) {
+        // Payment failed — reject mutex so waiters attempt their own payment
+        rejectPayment(err);
+        throw err;
+      } finally {
+        if (paymentInFlight === currentPayment) paymentInFlight = null;
+      }
+    } finally {
+      // Do not await tee cancellation: its other branch may still be uploading.
+      if (retryTemplate.body && !retryTemplate.bodyUsed) {
+        void retryTemplate.body.cancel().catch(() => {});
+      }
     }
   };
 }

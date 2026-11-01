@@ -155,6 +155,12 @@ Async factory that creates a fully-configured client. Async due to SVM key deriv
 | `httpClient` | `x402HTTPClient` | Underlying HTTP client (for advanced hook registration) |
 | `gatewayClient` | `GatewayClient \| undefined` | Circle Gateway client for deposit/balance management (nanopayment mode only) |
 
+`fetch` accepts native `Request` inputs and preserves their headers, body, and
+request options through payment and session retries. An explicit `init.headers`
+replaces the Request's headers, matching native fetch. The request is cloned before
+its first send; as with `Request.clone()`, an unread retry body can be buffered in
+memory. Use bounded bodies for paid requests rather than unbounded streams.
+
 ### gRPC-Web Transport
 
 ```typescript
