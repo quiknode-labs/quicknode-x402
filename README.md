@@ -145,6 +145,12 @@ Async factory that creates a fully-configured client. Async due to SVM key deriv
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `fetch(input, init?)` | `Promise<Response>` | x402-enabled fetch with Bearer auth, SIWX auto-sign, payment, and session extraction |
+
+`fetch` accepts native `Request` inputs and preserves their headers, body, and
+request options through payment and session retries. An explicit `init.headers`
+replaces the Request's headers, matching native fetch. The request is cloned before
+its first send; as with `Request.clone()`, an unread retry body can be buffered in
+memory. Use bounded bodies for paid requests rather than unbounded streams.
 | `getToken()` | `string \| null` | Current cached session JWT |
 | `getAccountId()` | `string \| null` | CAIP-10 account ID from JWT |
 | `isTokenExpired()` | `boolean` | Whether cached JWT is expired (with 30s buffer) |
