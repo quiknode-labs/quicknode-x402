@@ -13,6 +13,7 @@ interface SeenRequest {
 
 const servers: Server[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     servers.splice(0).map(
       (server) =>
@@ -58,7 +59,7 @@ function client(
   paymentModel?: 'credit-drawdown' | 'pay-per-request' | 'nanopayment',
 ) {
   const createPaymentPayload = vi.fn(async () => ({}));
-  // Only payment authorization is a boundary double; fetch remains native.
+  // Payment authorization is a boundary double; requests use native fetch.
   const httpClient = {
     getPaymentRequiredResponse: () => ({ accepts: [] }),
     handlePaymentRequired: async () => ({}),
@@ -83,6 +84,22 @@ function client(
     }),
     createPaymentPayload,
   };
+}
+
+function recordRequestOptions() {
+  const nativeFetch = globalThis.fetch;
+  const options: { context: string | null; referrer: string; referrerPolicy: ReferrerPolicy }[] =
+    [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    if (!(input instanceof Request)) throw new Error('Expected the wrapper to send a Request');
+    options.push({
+      context: input.headers.get('x-context'),
+      referrer: input.referrer,
+      referrerPolicy: input.referrerPolicy,
+    });
+    return nativeFetch(input, init);
+  });
+  return options;
 }
 
 describe.each([
@@ -130,6 +147,18 @@ describe.each([
       { context: 'new', body: 'buffered' },
     ]);
   });
+
+  it('preserves referrer options on the payment-bearing retry', async () => {
+    const api = await merchant();
+    const observed = recordRequestOptions();
+    const payment = client(new SessionManager(), mode);
+    const referrer = `${api.url}/caller`;
+    await payment.fetch(new Request(api.url, { referrer, referrerPolicy: 'origin' }));
+    expect(observed).toEqual([
+      { context: null, referrer, referrerPolicy: 'origin' },
+      { context: null, referrer, referrerPolicy: 'origin' },
+    ]);
+  });
 });
 
 it('replays both Request bodies when a credit caller waits for a session', async () => {
@@ -154,6 +183,35 @@ it('replays both Request bodies when a credit caller waits for a session', async
   expect(api.seen.filter((request) => request.body === 'first')).toHaveLength(2);
   expect(api.seen.filter((request) => request.body === 'second')).toHaveLength(2);
   expect(api.seen.every((request) => request.context === request.body)).toBe(true);
+  expect(payment.createPaymentPayload).toHaveBeenCalledTimes(1);
+});
+
+it('preserves each credit caller referrer on payment and session retries', async () => {
+  const api = await merchant();
+  const observed = recordRequestOptions();
+  const payment = client(new SessionManager(), 'credit-drawdown');
+  payment.createPaymentPayload.mockImplementation(async () => {
+    await api.twoRequests;
+    return {};
+  });
+  await Promise.all(
+    ['first', 'second'].map((context) =>
+      payment.fetch(
+        new Request(api.url, {
+          headers: { 'x-context': context },
+          referrer: `${api.url}/${context}`,
+          referrerPolicy: 'same-origin',
+        }),
+      ),
+    ),
+  );
+  expect(observed).toHaveLength(4);
+  for (const context of ['first', 'second']) {
+    expect(observed.filter((options) => options.context === context)).toEqual([
+      { context, referrer: `${api.url}/${context}`, referrerPolicy: 'same-origin' },
+      { context, referrer: `${api.url}/${context}`, referrerPolicy: 'same-origin' },
+    ]);
+  }
   expect(payment.createPaymentPayload).toHaveBeenCalledTimes(1);
 });
 

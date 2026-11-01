@@ -92,9 +92,8 @@ export function createQuicknodeFetch(options: {
         // If the first payment succeeded, a JWT is now cached — retry with Bearer
         const freshToken = session.getToken();
         if (freshToken && !session.isExpired()) {
-          const retryHeaders = new Headers(retryTemplate.headers);
-          retryHeaders.set('Authorization', `Bearer ${freshToken}`);
-          return globalThis.fetch(new Request(retryTemplate, { headers: retryHeaders }));
+          retryTemplate.headers.set('Authorization', `Bearer ${freshToken}`);
+          return globalThis.fetch(retryTemplate);
         }
         // First payment failed or JWT expired — fall through to attempt our own payment.
       }
@@ -130,14 +129,12 @@ export function createQuicknodeFetch(options: {
         );
 
         // 7. Build retry request with merged headers (hook + payment)
-        const retryHeaders = new Headers(retryTemplate.headers);
         for (const [key, value] of Object.entries(mergedHeaders)) {
-          retryHeaders.set(key, value);
+          retryTemplate.headers.set(key, value);
         }
-        const retryRequest = new Request(retryTemplate, { headers: retryHeaders });
 
         // 8. Retry with merged headers
-        const retryResponse = await globalThis.fetch(retryRequest);
+        const retryResponse = await globalThis.fetch(retryTemplate);
 
         // 9. Extract session JWT from settlement if present (skip for sessionless modes)
         if (!isSessionless) {
